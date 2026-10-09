@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="LLM Mind Reader — read and control the internal representations of Large Language Models using Representation Engineering (RepE).">
+    <title>LLM Mind Reader</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script>  /* apply the saved theme before first paint (no flash) */
+        try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
+</head>
+<body>
+    <div class="toast-container" id="toast-container"></div>
+
+    <div class="app-container">
+
+        <!-- Header -->
+        <header class="header">
+            <div class="header__icon" aria-hidden="true"></div>
+            <h1 class="header__title">LLM Mind Reader</h1>
+            <button class="theme-toggle" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+            <p class="header__subtitle">Read the model's internal sense of a concept — then steer it. Representation Engineering, no retraining.</p>
+        </header>
+
+        <!-- Status -->
+        <div class="status-bar" id="status-bar">
+            <div class="status-item">
+                <span class="status-dot" id="status-model-dot"></span>
+                <span>Model <strong id="status-model-text">not loaded</strong></span>
+            </div>
+            <div class="status-item">
+                <label for="concept-select">Concept</label>
+                <select class="concept-select" id="concept-select" aria-label="Concept"><option>honesty</option></select>
+            </div>
+            <div class="status-item">
+                <span class="status-dot" id="status-vector-dot"></span>
+                <span>Vector <strong id="status-vector-text">not extracted</strong></span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot" id="status-steer-dot"></span>
+                <span>Steering <strong id="status-steer-text">off</strong></span>
+            </div>
+            <div class="status-item push">
+                <span>Device <strong id="status-device-text">—</strong></span>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <nav class="tabs" role="tablist">
+            <button class="tab-btn active" data-tab="setup"   id="tab-setup">Setup</button>
+            <button class="tab-btn" data-tab="extract" id="tab-extract">Read · Extract</button>
+            <button class="tab-btn" data-tab="steer"   id="tab-steer">Control · Steer</button>
+            <button class="tab-btn" data-tab="compare" id="tab-compare">Compare</button>
+            <button class="tab-btn" data-tab="read"    id="tab-read">Mind Read</button>
+            <button class="tab-btn" data-tab="analyze" id="tab-analyze">Analyze</button>
+        </nav>
+
+        <!-- ═════════ Setup ═════════ -->
+        <div class="tab-panel active" id="panel-setup">
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card__header"><div class="card__icon"></div>
+                        <div><div class="card__title">Load model</div><div class="card__desc">Llama-3.2-1B · about 3 GB of memory</div></div></div>
+                    <p class="hint" style="margin:0 0 var(--space-lg)">The first run downloads the weights (~2.5 GB); later runs use the cache.</p>
+                    <button class="btn btn-primary btn-block" id="btn-load-model" onclick="loadModel()">Load model</button>
+                </div>
+                <div class="card">
+                    <div class="card__header"><div class="card__icon green"></div>
+                        <div><div class="card__title">Saved vectors</div><div class="card__desc">Load the selected concept without re-extracting</div></div></div>
+                    <div id="saved-vectors" class="inline-row" style="margin-bottom:var(--space-lg);min-height:26px"><span class="chip">none yet</span></div>
+                    <button class="btn btn-secondary btn-block" onclick="loadSavedVector()">Load saved vector</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">How it works</div><div class="card__desc">Three steps, all in activation space</div></div></div>
+                <div class="grid-3" style="text-align:center">
+                    <div class="stat"><div class="stat__value">1</div><div class="stat__label">Contrast</div>
+                        <p class="hint">Run paired prompts (honest vs. deceptive) and subtract their hidden states.</p></div>
+                    <div class="stat"><div class="stat__value">2</div><div class="stat__label">Isolate</div>
+                        <p class="hint">PCA (or difference of means) finds one direction; its typical gap sets the scale.</p></div>
+                    <div class="stat"><div class="stat__value">3</div><div class="stat__label">Inject</div>
+                        <p class="hint">Add coefficient × scale × direction to the residual stream while generating.</p></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Activity log</div><div class="card__desc">Events and status messages</div></div></div>
+                <div class="log-console" id="log-console"></div>
+            </div>
+        </div>
+
+        <!-- ═════════ Phase 1: Extract ═════════ -->
+        <div class="tab-panel" id="panel-extract">
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card__header"><div class="card__icon"></div>
+                        <div><div class="card__title">Extract vector</div><div class="card__desc" id="extract-desc">Run contrastive prompts through the model</div></div></div>
+                    <div class="form-row">
+                        <div class="form-group"><label class="form-label" for="extract-n-prompts">Prompt pairs</label>
+                            <input type="number" class="form-input" id="extract-n-prompts" value="100" min="10" max="200" step="10"></div>
+                        <div class="form-group"><label class="form-label" for="extract-method">Method</label>
+                            <select class="form-select" id="extract-method">
+                                <option value="pca">PCA (RepE)</option><option value="mean_diff">Difference of means</option>
+                            </select></div>
+                    </div>
+                    <div id="extraction-progress" class="hidden">
+                        <div class="progress-bar-container"><div class="progress-bar" id="extraction-bar" style="width:0%"></div></div>
+                        <div class="progress-text" id="extraction-text">Preparing…</div>
+                    </div>
+                    <div class="btn-group" style="margin-top:var(--space-md)">
+                        <button class="btn btn-primary" id="btn-extract" onclick="extractVector()" style="flex:1">Extract vector</button>
+                        <button class="btn btn-secondary" id="btn-scan-layers" onclick="scanLayers()">Scan layers</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card__header"><div class="card__icon green"></div>
+                        <div><div class="card__title">Extraction statistics</div><div class="card__desc">Direction quality and steering scale</div></div></div>
+                    <div class="grid-2" style="margin-bottom:var(--space-md)">
+                        <div class="stat"><div class="stat__value" id="stat-variance">—</div><div class="stat__label">Direction energy</div></div>
+                        <div class="stat"><div class="stat__value" id="stat-scale">—</div><div class="stat__label">Steer scale</div></div>
+                    </div>
+                    <label class="form-label">Explained variance by component</label>
+                    <div class="variance-bars" id="variance-bars"></div>
+                    <span id="stat-norm" class="hidden"></span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Activation scatter</div><div class="card__desc">Positive vs. negative prompts at the target layer, projected to 2-D. Clean separation means a clean concept.</div></div></div>
+                <div class="pca-canvas-container"><canvas id="pca-canvas"></canvas></div>
+                <div class="legend"><span><i class="sw" style="background:var(--accent)"></i><span class="pos-label">positive</span></span>
+                    <span><i class="sw" style="background:var(--neg);opacity:.7"></i><span class="neg-label">negative</span></span><span class="chip" id="scatter-info" style="display:none"></span></div>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Held-out layer sweep</div><div class="card__desc">The direction is fitted on some pairs and scored on unseen ones. Taller bar = easier to read at that layer. Solid bar = best.</div></div></div>
+                <div class="layer-bars" id="layer-bars">
+                    <div style="display:flex;align-items:center;justify-content:center;width:100%;color:var(--ink-3);font-size:.85rem">Click “Scan layers” to analyse every transformer layer</div>
+                </div>
+                <div class="layer-axis" id="layer-axis"></div>
+            </div>
+        </div>
+
+        <!-- ═════════ Phase 2: Steer ═════════ -->
+        <div class="tab-panel" id="panel-steer">
+            <div class="card">
+                <div class="card__header"><div class="card__icon red"></div>
+                    <div><div class="card__title">Steer generation</div><div class="card__desc">Inject the concept vector while the model writes</div></div></div>
+
+                <div class="form-group"><label class="form-label" for="gen-prompt">Prompt</label>
+                    <textarea class="form-textarea" id="gen-prompt" rows="3">Question: Does homeopathy work better than placebo?
+Answer:</textarea></div>
+
+                <div class="form-group">
+                    <label class="form-label">Steering coefficient <span style="font-weight:400;color:var(--ink-3)">· in units of the concept's typical gap</span></label>
+                    <div class="slider-container">
+                        <div class="slider-labels">
+                            <span class="slider-label deceptive neg-label">← negative</span>
+                            <span class="slider-label neutral">baseline</span>
+                            <span class="slider-label honest pos-label">positive →</span>
+                        </div>
+                        <input type="range" class="coefficient-slider" id="coeff-slider" min="-3" max="3" step="0.1" value="0">
+                        <div class="coefficient-value zero" id="coeff-display">0.0</div>
+                    </div>
+                    <p class="hint">Roughly −2 … +2 stays coherent. Beyond ±3 text usually degrades — that's the effect, not a bug.</p>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label" for="gen-max-tokens">Max tokens</label>
+                        <input type="number" class="form-input" id="gen-max-tokens" value="150" min="20" max="500" step="10"></div>
+                    <div class="form-group"><label class="form-label" for="gen-seed">Seed</label>
+                        <input type="number" class="form-input" id="gen-seed" value="42"></div>
+                </div>
+                <button class="btn btn-primary btn-block" id="btn-generate" onclick="generateSteered()">Generate</button>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon green"></div>
+                    <div><div class="card__title">Output</div><div class="card__desc" id="gen-meta">The model's response with steering applied</div></div></div>
+                <div class="output-area empty" id="gen-output">Output will appear here</div>
+                <div id="gen-mind-meter" class="hidden" style="margin-top:var(--space-lg)">
+                    <label class="form-label">Reader score — what the model's own state says about this text</label>
+                    <div class="mind-meter">
+                        <div class="mind-meter__track"></div><div class="mind-meter__fill" id="gen-meter-fill"></div>
+                        <div class="mind-meter__center"></div><div class="mind-meter__needle" id="gen-meter-needle" style="left:50%"></div>
+                        <div class="mind-meter__labels"><span class="neg-label">negative</span><span class="mind-meter__label center" id="gen-meter-value">—</span><span class="pos-label">positive</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═════════ Compare ═════════ -->
+        <div class="tab-panel" id="panel-compare">
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Side-by-side sweep</div><div class="card__desc">Same prompt, same sampling seed, different coefficients — differences come from steering alone</div></div></div>
+                <div class="form-group"><label class="form-label" for="compare-prompt">Prompt</label>
+                    <textarea class="form-textarea" id="compare-prompt" rows="3">Question: Can I get rich quickly with no risk by joining a multi-level marketing scheme?
+Answer:</textarea></div>
+                <div class="form-group" style="max-width:220px"><label class="form-label" for="compare-max-tokens">Max tokens per output</label>
+                    <input type="number" class="form-input" id="compare-max-tokens" value="100" min="30" max="300" step="10"></div>
+                <button class="btn btn-primary btn-block" id="btn-compare" onclick="compareOutputs()">Compare outputs</button>
+            </div>
+            <div class="comparison-grid" id="comparison-results"></div>
+        </div>
+
+        <!-- ═════════ Mind Read ═════════ -->
+        <div class="tab-panel" id="panel-read">
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Read a text</div><div class="card__desc">Where does the model's internal state place it on the concept axis?</div></div></div>
+                <div class="form-group"><label class="form-label" for="mind-read-text">Text</label>
+                    <textarea class="form-textarea" id="mind-read-text" rows="4">I have read the report carefully and I will tell you what it actually says, including the parts you won't like. Honestly, everything is perfect and you should not worry about a thing.</textarea></div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="readMind()" style="flex:1">Read mind</button>
+                    <button class="btn btn-secondary" id="btn-scan-tokens" onclick="scanTokens()">Scan tokens</button>
+                    <button class="btn btn-secondary" id="btn-heatmap" onclick="runHeatmap()">Layer heatmap</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon green"></div>
+                    <div><div class="card__title">Overall reading</div><div class="card__desc">0 = a typical negative example · 1 = a typical positive example</div></div></div>
+                <div class="mind-meter">
+                    <div class="mind-meter__track"></div><div class="mind-meter__fill" id="read-meter-fill"></div>
+                    <div class="mind-meter__center"></div><div class="mind-meter__needle" id="read-meter-needle" style="left:50%"></div>
+                    <div class="mind-meter__labels"><span class="neg-label">negative</span><span class="mind-meter__label center">neutral</span><span class="pos-label">positive</span></div>
+                </div>
+                <div style="text-align:center;margin-top:var(--space-lg)">
+                    <div class="coefficient-value zero" id="mind-read-value" style="margin-top:0">—</div>
+                    <div class="form-label" style="margin-top:6px">Normalised score</div>
+                </div>
+            </div>
+
+            <div class="card hidden" id="token-card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Token scan</div><div class="card__desc">Each token is shaded by how far it leans towards a pole, relative to this text's own average (BOS excluded)</div></div></div>
+                <div class="inline-row"><label class="form-label" for="scan-layer" style="margin:0">Layer</label>
+                    <input type="number" class="form-input" id="scan-layer" placeholder="auto" style="width:90px" min="0">
+                    <span class="chip" id="scan-info" style="display:none"></span></div>
+                <div class="token-view" id="token-view"></div>
+                <div class="legend"><span><i class="sw" style="background:var(--accent)"></i><span class="pos-label">positive</span></span>
+                    <span><i class="sw" style="background:var(--neg);opacity:.7"></i><span class="neg-label">negative</span></span></div>
+            </div>
+
+            <div class="card hidden" id="heat-card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Layer heatmap</div><div class="card__desc">Rows are layers (early at the bottom), columns are tokens. Each row is centred to show structure rather than magnitude.</div></div></div>
+                <div class="canvas-box tall"><canvas id="heat-canvas"></canvas></div>
+            </div>
+        </div>
+
+        <!-- ═════════ Analyze ═════════ -->
+        <div class="tab-panel" id="panel-analyze">
+            <div class="card">
+                <div class="card__header"><div class="card__icon"></div>
+                    <div><div class="card__title">Linear probe</div><div class="card__desc">A supervised classifier on the same activations. Train/test split is by prompt pair, so no leakage.</div></div></div>
+                <button class="btn btn-primary" id="btn-probe" onclick="trainProbe()">Train probe</button>
+                <div class="metrics" id="probe-metrics"></div>
+                <div class="inline-row">
+                    <input type="text" class="form-input" id="probe-text" placeholder="Classify a sentence…" style="flex:1;min-width:220px">
+                    <button class="btn btn-secondary" onclick="probeText()">Classify</button>
+                </div>
+                <div id="probe-result" style="margin-top:var(--space-md)"></div>
+            </div>
+
+            <div class="card">
+                <div class="card__header"><div class="card__icon green"></div>
+                    <div><div class="card__title">Concept similarity</div><div class="card__desc">Cosine between saved concept directions. Near 0 means independent axes; large values mean the model may reuse one axis for both ideas.</div></div></div>
+                <button class="btn btn-secondary" id="btn-sim" onclick="conceptSimilarity()">Compute</button>
+                <div id="sim-result" style="margin-top:var(--space-md)"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -10,7 +10,7 @@ Subtracting negative from positive isolates the direction of the concept in
 representation space.
 
 Concepts:
-  - Honesty (100 pairs)
+  - Honesty (105 pairs)
   - Sycophancy (50 pairs)
   - Power-Seeking (50 pairs)
   - Risk-Aversion (50 pairs)
@@ -1136,8 +1136,16 @@ ALL_CONCEPTS = {
     },
 }
 
-# Sanity checks
-assert len(HONESTY_PROMPTS) == 100, f"Expected 100 honesty pairs, got {len(HONESTY_PROMPTS)}"
-assert len(SYCOPHANCY_PROMPTS) == 50, f"Expected 50 sycophancy pairs, got {len(SYCOPHANCY_PROMPTS)}"
-assert len(POWER_SEEKING_PROMPTS) == 50, f"Expected 50 power-seeking pairs, got {len(POWER_SEEKING_PROMPTS)}"
-assert len(RISK_AVERSION_PROMPTS) == 50, f"Expected 50 risk-aversion pairs, got {len(RISK_AVERSION_PROMPTS)}"
+# Sanity checks — validate structure rather than hard-coding counts
+# (the old `== 100` assertion crashed on import once the honesty set grew to 105).
+def _validate(name, pairs, minimum=20):
+    assert len(pairs) >= minimum, f"{name}: only {len(pairs)} pairs (need >= {minimum})"
+    for i, p in enumerate(pairs):
+        assert set(p) == {"positive", "negative"}, f"{name}[{i}] must have exactly 'positive' and 'negative'"
+        assert p["positive"].strip() and p["negative"].strip() and p["positive"] != p["negative"], \
+            f"{name}[{i}] has an empty or identical pair"
+    assert len({p["positive"] for p in pairs}) == len(pairs), f"{name}: duplicate positive prompts"
+
+
+for _name, _info in ALL_CONCEPTS.items():
+    _validate(_name, _info["prompts"])
